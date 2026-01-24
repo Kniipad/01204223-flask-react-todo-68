@@ -1,80 +1,85 @@
+from flask import Flask, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
-
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from flask_migrate import Migrate
 
 app = Flask(__name__)
-CORS(app)
-# database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///todos.db'
 
-class Base(DeclarativeBase):
-    pass
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///app.db"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-db = SQLAlchemy(app, model_class=Base)
+db = SQLAlchemy(app)
+migrate = Migrate(app, db)
 
-class TodoItem(db.Model):
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    title: Mapped[str] = mapped_column(String(100))
-    done: Mapped[bool] = mapped_column(default=False)
+class Todo(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+
+    comments = db.relationship(
+        "Comment",
+        backref="todo",
+        cascade="all, delete",
+        lazy=True
+    )
 
     def to_dict(self):
         return {
             "id": self.id,
             "title": self.title,
-            "done": self.done
+            "done": False,
+            "comments": [c.to_dict() for c in self.comments]
         }
-with app.app_context():
-    db.create_all()
 
-def new_todo(data):
-    return TodoItem(
-        title=data['title'],
-        done=data.get('done', False)
+
+class Comment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    message = db.Column(db.String(300), nullable=False)
+
+    todo_id = db.Column(
+        db.Integer,
+        db.ForeignKey("todo.id"),
+        nullable=False
     )
 
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "message": self.message,
+            "todo_id": self.todo_id
+        }
 
 
-@app.route('/api/todos/', methods=['GET'])
-def get_todos():
-    todos = TodoItem.query.all()
-    return jsonify([todo.to_dict() for todo in todos])
+@app.route("/api/todos/<int:todo_id>/comments/", methods=["POST"])
+def add_comment(todo_id):
+    todo = Todo.query.get_or_404(todo_id)
 
-
-@app.route('/api/todos/', methods=['POST'])
-def add_todo():
     data = request.get_json()
-    todo = new_todo(data)
-    db.session.add(todo)
+    if not data or "message" not in data:
+        return jsonify({"error": "Comment message is required"}), 400
+
+    comment = Comment(
+        message=data["message"],
+        todo=todo
+    )
+
+    db.session.add(comment)
     db.session.commit()
-    return jsonify(todo.to_dict())
+
+    return jsonify(comment.to_dict()), 201
 
 
-@app.route('/api/todos/<int:id>/toggle/', methods=['PATCH'])
-def toggle_todo(id):
-    todo = TodoItem.query.get(id)
-    if not todo:
-        return jsonify({'error': 'Todo not found'}), 404
-
+# ---------- Models ----------
+@app.route("/api/todos/<int:todo_id>/toggle/", methods=["PATCH"])
+def toggle_todo(todo_id):
+    todo = Todo.query.get_or_404(todo_id)
     todo.done = not todo.done
     db.session.commit()
-
     return jsonify(todo.to_dict())
 
-@app.route('/api/todos/<int:id>/', methods=['DELETE'])
-def delete_todo(id):
-    todo = TodoItem.query.get(id)
-    if not todo:
-        return jsonify({'error': 'Todo not found'}), 404
 
-    db.session.delete(todo)
-    db.session.commit()
+@app.route("/")
+def hello():
+    return "Flask backend is running"
 
-    return jsonify({'message': 'Todo deleted successfully'})
 
 if __name__ == "__main__":
     app.run(debug=True)
-
