@@ -30,6 +30,12 @@ class TodoItem(db.Model):
 with app.app_context():
     db.create_all()
 
+def new_todo(data):
+    return TodoItem(
+        title=data['title'],
+        done=data.get('done', False)
+    )
+
 
 
 @app.route('/api/todos/', methods=['GET'])
@@ -41,19 +47,10 @@ def get_todos():
 @app.route('/api/todos/', methods=['POST'])
 def add_todo():
     data = request.get_json()
-
-    if not data or 'title' not in data:
-        return jsonify({'error': 'Invalid todo data'}), 400
-
-    todo = TodoItem(
-        title=data['title'],
-        done=data.get('done', False)
-    )
-
+    todo = new_todo(data)
     db.session.add(todo)
     db.session.commit()
-
-    return jsonify(todo.to_dict()), 201
+    return jsonify(todo.to_dict())
 
 
 @app.route('/api/todos/<int:id>/toggle/', methods=['PATCH'])
