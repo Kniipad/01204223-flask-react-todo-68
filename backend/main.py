@@ -1,60 +1,59 @@
-import click
-from flask import Flask, jsonify, request
-from flask_sqlalchemy import SQLAlchemy
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import Integer, String
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 from flask_migrate import Migrate
-from flask_bcrypt import generate_password_hash, check_password_hash
-from flask_jwt_extended import (
-    JWTManager,
-    create_access_token,
-    jwt_required,
-    get_jwt_identity,
-)
-# ---------- App ----------
-app = Flask(__name__)
-app.config["JWT_SECRET_KEY"] = "super-secret-key"
-jwt = JWTManager(app)
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///app.db"
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+from sqlalchemy import Integer, String, ForeignKey                            # เพิ่ม import Foreignkey
+from sqlalchemy.orm import Mapped, mapped_column, relationship                # เพิ่ม import relatiohship
+from models import TodoItem, Comment, db, User
+from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
+from flask_jwt_extended import JWTManager
 
-db = SQLAlchemy(app)
+import click
+
+
+
+app = Flask(__name__)
+CORS(app)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///todos.db'
+
+class Base(DeclarativeBase):
+  pass
+
+db.init_app(app)                                                     # แก้จาก db = SQLAlchemy(app, model_class=Base)
 migrate = Migrate(app, db)
 
-# ---------- Models ----------
-# ---------- Models ----------
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    hashed_password = db.Column(db.String(128), nullable=False)
-    full_name = db.Column(db.String(200))
-    def set_password(self, password):
-        self.hashed_password = generate_password_hash(password).decode("utf-8")
+app.config['JWT_SECRET_KEY'] = 'fdsjkfjioi2rjshr2345hrsh043j5oij5545'
+jwt = JWTManager(app)
 
-    def check_password(self, password):
-        return check_password_hash(self.hashed_password, password)
-    
-class Todo(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(200), nullable=False)
+"""
+class TodoItem(db.Model):
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(100))
+    done: Mapped[bool] = mapped_column(default=False)
 
-    comments = db.relationship(
-        "Comment",
-        backref="todo",
-        cascade="all, delete",
-        lazy=True
-    )
+    ##### เพิ่มส่วน relationship  ซึ่งตรงนี้จะไม่กระทบ schema database เลย (เพราะว่าไม่มีการ map ไปยังคอลัมน์ใดๆ)
+    comments: Mapped[list["Comment"]] = relationship(back_populates="todo")
 
     def to_dict(self):
         return {
             "id": self.id,
             "title": self.title,
-            "comments": [c.to_dict() for c in self.comments]
+            "done": self.done,
+            "comments": [
+                comment.to_dict() for comment in self.comments
+            ]
         }
-
-
+"""
+"""
 class Comment(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    message = db.Column(db.String(300), nullable=False)
-    todo_id = db.Column(db.Integer, db.ForeignKey("todo.id"), nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    message: Mapped[str] = mapped_column(String(250))
+    todo_id: Mapped[int] = mapped_column(ForeignKey('todo_item.id'))
+
+    todo: Mapped["TodoItem"] = relationship(back_populates="comments")
 
     def to_dict(self):
         return {
@@ -62,6 +61,31 @@ class Comment(db.Model):
             "message": self.message,
             "todo_id": self.todo_id
         }
+"""
+
+with app.app_context():
+    db.create_all()
+"""
+INITIAL_TODOS = [
+    TodoItem(title='Learn Flask'),
+    TodoItem(title='Build a Flask App'),
+]
+
+with app.app_context():
+    if TodoItem.query.count() == 0:
+         for item in INITIAL_TODOS:
+             db.session.add(item)
+         db.session.commit()
+"""
+
+todo_list = [
+    { "id": 1,
+      "title": 'Learn Flask',
+      "done": True },
+    { "id": 2,
+      "title": 'Build a Flask App',
+      "done": False },
+]
 
 @app.route('/api/todos/', methods=['GET'])
 @jwt_required()
@@ -70,24 +94,56 @@ def get_todos():
     return jsonify([todo.to_dict() for todo in todos])
 
 
-@app.route("/api/todos/", methods=["POST"])
+def new_todo(data):
+    return TodoItem(title=data['title'], 
+                    done=data.get('done', False))
+
+
+@app.route('/api/todos/', methods=['POST'])
 def add_todo():
     data = request.get_json()
-    if not data or "title" not in data:
-        return jsonify({"error": "title required"}), 400
+    todo = new_todo(data)
+    if todo:
+        db.session.add(todo)                       # บรรทัดที่ปรับใหม่
+        db.session.commit()                        # บรรทัดที่ปรับใหม่ 
+        return jsonify(todo.to_dict())             # บรรทัดที่ปรับใหม่
+    else:
+        # return http response code 400 for bad requests
+        return (jsonify({'error': 'Invalid todo data'}), 400) 
+    
 
-    todo = Todo(title=data["title"])
-    db.session.add(todo)
+@app.route('/api/todos/<int:id>/toggle/', methods=['PATCH'])
+def toggle_todo(id):
+    todo = TodoItem.query.get_or_404(id)
+    todo.done = not todo.done
     db.session.commit()
-    return jsonify(todo.to_dict()), 201
+    return jsonify(todo.to_dict())
 
 
-@app.route("/api/todos/<int:todo_id>/", methods=["DELETE"])
-def delete_todo(todo_id):
-    todo = Todo.query.get_or_404(todo_id)
+@app.route('/api/todos/<int:id>/', methods=['DELETE'])
+def delete_todo(id):
+    todo = TodoItem.query.get_or_404(id)
     db.session.delete(todo)
     db.session.commit()
-    return jsonify({"message": "Login success"})
+    return jsonify({'message': 'Todo deleted successfully'})
+
+@app.route('/api/todos/<int:todo_id>/comments/', methods=['POST'])
+def add_comment(todo_id):
+    todo_item = TodoItem.query.get_or_404(todo_id)
+
+    data = request.get_json()
+    if not data or 'message' not in data:
+        return jsonify({'error': 'Comment message is required'}), 400
+
+    comment = Comment(
+        message=data['message'],
+        todo_id=todo_item.id
+    )
+    db.session.add(comment)
+    db.session.commit()
+ 
+    return jsonify(comment.to_dict())
+
 
 @app.route('/api/login/', methods=['POST'])
 def login():
@@ -99,7 +155,8 @@ def login():
     if not user or not user.check_password(data['password']):
         return jsonify({'error': 'Invalid username or password'}), 401
 
-    return jsonify({'message': 'Login successful'})
+    access_token = create_access_token(identity=user.username)
+    return jsonify(access_token=access_token)
 
 @app.cli.command("create-user")
 @click.argument("username")
