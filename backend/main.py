@@ -10,10 +10,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship                # 
 from models import TodoItem, Comment, db, User
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 from flask_jwt_extended import JWTManager
-
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
 import click
 
-
+db = SQLAlchemy()
+migrate = Migrate()
 
 app = Flask(__name__)
 CORS(app)
